@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Canvas ULTRA | Abhay</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+    <style>
+        :root {
+            --primary: #00f2ff;
+            --secondary: #7000ff;
+            --bg: #0a0a0a;
+            --panel: rgba(20, 20, 20, 0.85);
+            --border: rgba(255, 255, 255, 0.15);
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg);
+            color: white;
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 3D Container */
+        .workspace {
+            position: relative;
+            width: 95vw;
+            height: 90vh;
+            background: #000;
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 0 80px rgba(0, 242, 255, 0.15);
+            border: 1px solid var(--border);
+        }
+
+        /* Video Feed (Mirrored) */
+        .input_video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 0.3;
+            /* Low opacity to focus on art */
+        }
+
+        /* Canvas Layer */
+        .output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+        }
+
+        /* UI Layer */
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        /* Floating Toolbars */
+        .toolbar {
+            position: absolute;
+            background: var(--panel);
+            backdrop-filter: blur(15px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 15px;
+            pointer-events: auto;
+            transition: 0.3s;
+        }
+
+        .toolbar-left {
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .toolbar-bottom {
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            padding: 10px 30px;
+            border-radius: 50px;
+        }
+
+        /* Buttons */
+        .btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 14px;
+            border: none;
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            font-size: 1.2rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover,
+        .btn.hover-active {
+            background: var(--primary);
+            color: black;
+            transform: scale(1.1);
+            box-shadow: 0 0 20px var(--primary);
+        }
+
+        .btn.active {
+            background: var(--primary);
+            color: black;
+        }
+
+        /* Color Swatches */
+        .color-swatch {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .color-swatch.active {
+            transform: scale(1.3);
+            border-color: white;
+        }
+
+        /* Header Info */
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            left: 30px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 10px;
+            border-left: 4px solid var(--primary);
+        }
+
+        .mode-badge {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: bold;
+            color: var(--primary);
+        }
+
+        /* Dynamic Cursor */
+        #cursor {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            z-index: 100;
+            transition: width 0.1s, height 0.1s;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+        }
+
+        /* Loading Ring */
+        .progress-ring__circle {
+            transition: 0.1s stroke-dashoffset;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="workspace">
+        <video class="input_video"></video>
+        <canvas class="output_canvas"></canvas>
+
+        <div class="ui-layer">
+
+            <div class="info-panel">
+                <div class="mode-badge" id="mode-text">INITIALIZING...</div>
+                <div style="font-size: 0.7rem; color: #aaa; margin-top:5px;">FPS: <span id="fps">0</span></div>
+            </div>
+
+            <div class="toolbar toolbar-left">
+                <button class="btn active" id="tool-brush" onclick="setTool('brush')"><i
+                        class="fas fa-paint-brush"></i></button>
+                <button class="btn" id="tool-eraser" onclick="setTool('eraser')"><i class="fas fa-eraser"></i></button>
+                <button class="btn" onclick="undo()"><i class="fas fa-undo"></i></button>
+                <button class="btn" onclick="clearCanvas()"><i class="fas fa-trash"></i></button>
+                <button class="btn" onclick="saveArt()"><i class="fas fa-download"></i></button>
+            </div>
+
+            <div class="toolbar toolbar-bottom">
+                <div class="color-swatch active" style="background: #00f2ff;" onclick="setColor('#00f2ff', this)"></div>
+                <div class="color-swatch" style="background: #ff0055;" onclick="setColor('#ff0055', this)"></div>
+                <div class="color-swatch" style="background: #ccff00;" onclick="setColor('#ccff00', this)"></div>
+                <div class="color-swatch" style="background: #ffffff;" onclick="setColor('#ffffff', this)"></div>
+                <div class="color-swatch" style="background: #7000ff;" onclick="setColor('#7000ff', this)"></div>
+            </div>
+
+            <div style="position: absolute; bottom: 20px; right: 30px; opacity: 0.5; font-size: 0.8rem;">
+                AIR CANVAS PRO • ABHAY
+            </div>
+        </div>
+
+        <div id="cursor">
+            <svg height="40" width="40" style="position: absolute; top: -10px; left: -10px;">
+                <circle class="progress-ring__circle" stroke="white" stroke-width="3" fill="transparent" r="18" cx="20"
+                    cy="20" stroke-dasharray="113" stroke-dashoffset="113" />
+            </svg>
+        </div>
+    </div>
+
+    <script>
+        // --- SETUP ---
+        const video = document.querySelector('.input_video');
+        const canvas = document.querySelector('.output_canvas');
+        const ctx = canvas.getContext('2d');
+        const cursor = document.getElementById('cursor');
+        const progressCircle = document.querySelector('.progress-ring__circle');
+        const modeText = document.getElementById('mode-text');
+
+        // Canvas Size
+        canvas.width = window.innerWidth * 0.95;
+        canvas.height = window.innerHeight * 0.9;
+
+        // --- STATE ---
+        let currentTool = 'brush';
+        let currentColor = '#00f2ff';
+        let isDrawing = false;
+        let lastX = 0, lastY = 0;
+
+        // History (Undo)
+        let historyStack = [];
+        const MAX_HISTORY = 10;
+
+        // Smoothing
+        const SMOOTH_FACTOR = 0.2; // 0 = no smooth, 1 = no move
+        let smoothX = 0, smoothY = 0;
+
+        // Hover/Click Logic
+        let hoverStartTime = 0;
+        let hoveredElement = null;
+        const HOVER_TIME = 800; // ms to trigger click
+
+        // --- FUNCTIONS ---
+
+        function setTool(tool) {
+            currentTool = tool;
+            document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+            if (document.getElementById(`tool-${tool}`))
+                document.getElementById(`tool-${tool}`).classList.add('active');
+        }
+
+        function setColor(color, el) {
+            currentColor = color;
+            setTool('brush');
+            document.querySelectorAll('.color-swatch').forEach(c => c.classList.remove('active'));
+            el.classList.add('active');
+            cursor.style.borderColor = color;
+        }
+
+        function saveState() {
+            if (historyStack.length > MAX_HISTORY) historyStack.shift();
+            historyStack.push(canvas.toDataURL());
+        }
+
+        function undo() {
+            if (historyStack.length > 0) {
+                const imgData = historyStack.pop();
+                const img = new Image();
+                img.src = imgData;
+                img.onload = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0);
+                }
+            }
+        }
+
+        function clearCanvas() {
+            saveState();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function saveArt() {
+            const link = document.createElement('a');
+            link.download = 'abhay_air_art.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        }
+
+        // --- HAND TRACKING LOGIC ---
+        function onResults(results) {
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                modeText.innerText = "NO HAND DETECTED";
+                cursor.style.opacity = 0;
+                return;
+            }
+
+            const landmarks = results.multiHandLandmarks[0];
+            const index = landmarks[8];
+            const middle = landmarks[12];
+            const thumb = landmarks[4];
+
+            // 1. Get Coordinates (Mirrored)
+            const rawX = (1 - index.x) * canvas.width;
+            const rawY = index.y * canvas.height;
+
+            // 2. Smooth Coordinates (Linear Interpolation)
+            if (smoothX === 0) { smoothX = rawX; smoothY = rawY; }
+            smoothX = smoothX + (rawX - smoothX) * (1 - SMOOTH_FACTOR);
+            smoothY = smoothY + (rawY - smoothY) * (1 - SMOOTH_FACTOR);
+
+            // Update Cursor UI
+            cursor.style.opacity = 1;
+            cursor.style.left = smoothX + 'px';
+            cursor.style.top = smoothY + 'px';
+
+            // 3. Gesture Detection
+            // Calculate distance between Index and Middle finger
+            const fingersDist = Math.hypot((index.x - middle.x), (index.y - middle.y));
+            const isTwoFingers = fingersDist < 0.05; // Fingers together
+
+            // --- LOGIC: INTERACTION ---
+
+            // CHECK UI HOVER FIRST
+            const uiElement = document.elementFromPoint(smoothX + canvas.getBoundingClientRect().left, smoothY + canvas.getBoundingClientRect().top);
+            const isButton = uiElement && (uiElement.classList.contains('btn') || uiElement.classList.contains('color-swatch'));
+
+            if (isButton) {
+                // HOVER MODE
+                isDrawing = false;
+                modeText.innerText = "SELECTING...";
+                modeText.style.color = "#fff";
+
+                if (hoveredElement !== uiElement) {
+                    hoveredElement = uiElement;
+                    hoverStartTime = Date.now();
+                    uiElement.classList.add('hover-active');
+                } else {
+                    // Check Timer
+                    const elapsed = Date.now() - hoverStartTime;
+                    const progress = Math.min(elapsed / HOVER_TIME, 1);
+                    const dashOffset = 113 - (113 * progress);
+                    progressCircle.style.strokeDashoffset = dashOffset;
+
+                    if (elapsed > HOVER_TIME) {
+                        uiElement.click(); // TRIGGER CLICK
+                        hoverStartTime = Date.now() + 500; // Delay
+                        progressCircle.style.strokeDashoffset = 113;
+                    }
+                }
+            } else {
+                // RESET HOVER
+                if (hoveredElement) {
+                    hoveredElement.classList.remove('hover-active');
+                    hoveredElement = null;
+                    progressCircle.style.strokeDashoffset = 113;
+                }
+
+                // DRAWING vs MOVING
+                // If Index is UP and Middle is DOWN (Distance is large) -> DRAW
+                // If Index and Middle are TOGETHER (Distance is small) -> MOVE
+
+                if (isTwoFingers) {
+                    isDrawing = false;
+                    modeText.innerText = "MOVE (Peace Sign to Draw)";
+                    modeText.style.color = "#aaa";
+                    cursor.style.backgroundColor = "transparent";
+                } else {
+                    // ONE FINGER -> DRAW
+                    modeText.innerText = "DRAWING";
+                    modeText.style.color = currentColor;
+                    cursor.style.backgroundColor = currentColor;
+
+                    if (!isDrawing) {
+                        isDrawing = true;
+                        lastX = smoothX;
+                        lastY = smoothY;
+                        saveState(); // Save for undo before new stroke
+                    }
+
+                    // Variable Width based on speed (Simple implementation)
+                    const dist = Math.hypot(smoothX - lastX, smoothY - lastY);
+                    const dynamicWidth = Math.max(2, 10 - dist / 5); // Faster = Thinner
+
+                    ctx.beginPath();
+                    ctx.moveTo(lastX, lastY);
+                    ctx.lineTo(smoothX, smoothY);
+                    ctx.strokeStyle = currentTool === 'eraser' ? '#000000' : currentColor;
+                    ctx.lineWidth = currentTool === 'eraser' ? 30 : 6; // Fixed width for stability
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+
+                    if (currentTool === 'eraser') ctx.globalCompositeOperation = 'destination-out';
+                    else ctx.globalCompositeOperation = 'source-over';
+
+                    ctx.stroke();
+
+                    lastX = smoothX;
+                    lastY = smoothY;
+                    ctx.globalCompositeOperation = 'source-over';
+                }
+            }
+        }
+
+        // --- INIT ---
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+        hands.onResults(onResults);
+
+        const camera = new Camera(video, {
+            onFrame: async () => { await hands.send({ image: video }); },
+            width: 1280,
+            height: 720
+        });
+        camera.start();
+
+    </script>
+</body>
+
+</html>
